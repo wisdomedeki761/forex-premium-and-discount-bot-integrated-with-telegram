@@ -1,0 +1,26 @@
+node_modules/
+.env
+firebase-key.json
+*log
+.DS_Store
+dist/
+build/
+
+# PM2 logs
+logs/
+.pm2/
+
+# PM2 runtime files
+*.pid
+pids/
+
+Test-scripts/
+logs/
+MD-files/
+
+
+fix-dns.bat
+BOT_STUDY.md
+NEWS_NOTIFICATION_SYSTEM.md
+botfx updated2.zip
+package-lock.json
