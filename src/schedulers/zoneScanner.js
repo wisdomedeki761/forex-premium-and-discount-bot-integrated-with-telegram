@@ -137,6 +137,13 @@ class ZoneScanner {
         return await this.validateZone(symbol, exchange, indicators, currentZone, currentPrice);
       }
 
+      // Check if zone was recently expired (within last hour) - prevent immediate reactivation
+      const recentlyExpired = await zoneManager.wasRecentlyExpired(symbol, 1);
+      if (recentlyExpired) {
+        logger.debug(`Skipping ${symbol}: Zone was recently expired, waiting before reactivation`);
+        return false;
+      }
+
       // Check for new discount zone
       if (zoneStatus.type === 'discount') {
         logger.info(`🟢 DISCOUNT ZONE detected for ${symbol}: Price=${currentPrice.toFixed(5)}, Stoch=${indicators.stochK.toFixed(2)}`);
@@ -203,6 +210,17 @@ class ZoneScanner {
    */
   async validateZone(symbol, exchange, indicators, zone, currentPrice) {
     const zoneType = zone.type;
+
+    // Check if zone is older than 24 hours (especially for crypto)
+    const createdAt = new Date(zone.createdAt);
+    const now = new Date();
+    const hoursSinceCreation = (now - createdAt) / (1000 * 60 * 60);
+
+    if (hoursSinceCreation >= 24) {
+      logger.info(`⏰ ${zoneType.toUpperCase()} zone for ${symbol} expired: 24 hours elapsed`);
+      await zoneManager.expireZone(symbol, '24 hour expiration');
+      return false;
+    }
 
     // Check if EMAs have crossed (zone invalidated)
     let emaValid = false;

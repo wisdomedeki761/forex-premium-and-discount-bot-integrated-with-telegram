@@ -58,12 +58,8 @@ export class NewsScanner {
 
       logger.info('📰 Fetching today\'s economic calendar for morning summary...');
 
-      // Get managed forex pairs
-      const managedPairs = await getManagedPairs();
-      const forexPairs = managedPairs.forexPairs || [];
-
-      // Get today's events filtered by monitored currencies
-      const events = await newsClient.getTodayNews(forexPairs);
+      // Get today's events for major currencies (hardcoded: USD, GBP, CAD, AUD, JPY)
+      const events = await newsClient.getTodayNews();
 
       if (!events || events.length === 0) {
         logger.info('No high/medium impact events scheduled for today');
@@ -101,12 +97,8 @@ export class NewsScanner {
     try {
       logger.debug('🔔 Checking for upcoming events in the next hour...');
 
-      // Get managed forex pairs
-      const managedPairs = await getManagedPairs();
-      const forexPairs = managedPairs.forexPairs || [];
-
-      // Get events happening in the next hour
-      const upcomingEvents = await newsClient.getUpcomingEventsInNextHour(forexPairs);
+      // Get events happening in the next hour for major currencies
+      const upcomingEvents = await newsClient.getUpcomingEventsInNextHour();
 
       if (!upcomingEvents || upcomingEvents.length === 0) {
         logger.debug('No events happening in the next hour');

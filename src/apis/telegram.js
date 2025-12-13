@@ -12,6 +12,7 @@ import zoneManager from '../utils/zoneManager.js';
 import derivClient from './deriv.js';
 import bybitClient from './bybit.js';
 import trendingScanner from '../schedulers/trendingScanner.js';
+import entryMonitor from '../schedulers/entryMonitor.js';
 
 export class TelegramClient {
   constructor() {
@@ -54,6 +55,7 @@ export class TelegramClient {
     this.bot.onText(/\/history/, (msg) => this.handleHistory(msg));
     this.bot.onText(/\/managepairs/, (msg) => this.handleManagePairs(msg));
     this.bot.onText(/\/trending/, (msg) => this.handleTrending(msg));
+    this.bot.onText(/\/entry (.+)/, (msg, match) => this.handleEntry(msg, match[1]));
 
     // Dedicated forex pair commands (case-insensitive)
     this.bot.onText(/\/eurusd/i, (msg) => this.handlePairDirect(msg, 'frxEURUSD'));
@@ -177,6 +179,7 @@ Professional Smart Money Concepts zone detection and AI-powered market analysis.
 <b>📈 ZONE DETECTION COMMANDS</b>
 
 /active_signals - View all active premium/discount zones
+/entry [PAIR] - Start monitoring a pair for entry signal (e.g., /entry eurusd)
 /history - Review today's expired zones
 /trending - Browse trending cryptocurrency pairs
 /managepairs - Manage monitored pairs (owner only)
@@ -224,13 +227,16 @@ Auto-broadcast: Daily summary at 06:00 UTC | 1-hour alerts before major events
 
 <b>Step 2: Wait for Confirmation</b>
 • DO NOT enter immediately when a zone appears
+• Use /entry [PAIR] to start automated monitoring
+• Bot will monitor 15-minute SuperTrend for trend change
 • Wait for a clear break of structure (BOS)
 • Confirm trend change aligns with the zone direction
 • Look for price action confirmation (candlestick patterns, volume)
 
 <b>Step 3: Entry Execution</b>
-• Enter only after structure break and trend confirmation
-• Set stop loss beyond the zone boundaries
+• Bot will send entry signal when 15m trend changes
+• Signal includes: Signal ID, Entry Type, Current Price, Stop Loss
+• Set stop loss as indicated in the signal
 • Use proper risk management (1-2% risk per trade)
 • Take partial profits at key resistance/support levels
 
@@ -1198,43 +1204,57 @@ ${trendEmoji} <b>Trend: ${analysis.trend}</b>
   }
 
   /**
-   * Handle /news command - Show today's news for monitored forex pairs
+   * Handle /news command - Show forex news for major pairs (USD, GBP, CAD, AUD, JPY)
+   * Uses Finnhub API first, falls back to NewsAPI if needed
    */
   async handleNews(msg) {
     try {
-      await this.bot.sendMessage(msg.chat.id, '📰 Fetching today\'s news... Please wait...');
+      await this.bot.sendMessage(msg.chat.id, '📰 Fetching forex news for major pairs... Please wait...');
 
-      // Get managed forex pairs
-      const managedPairs = await getManagedPairs();
-      const forexPairs = managedPairs.forexPairs || [];
-
-      if (forexPairs.length === 0) {
-        await this.bot.sendMessage(msg.chat.id,
-          '⚠️ No forex pairs are currently being monitored.\n\n' +
-          'Use /managepairs to add forex pairs (e.g., EUR/USD, GBP/USD).\n\n' +
-          'The bot will automatically monitor news for currencies in your pairs.');
-        return;
+      // Try FCS API first (economic calendar)
+      let events = [];
+      let useForexNews = false;
+      
+      try {
+        events = await newsClient.getTodayNews();
+        // If we got events, use economic calendar format
+        if (events && events.length > 0) {
+          const message = newsClient.formatTodayNewsForTelegram(events, []);
+          await this.bot.sendMessage(msg.chat.id, message, { parse_mode: 'HTML' });
+          return;
+        }
+      } catch (fcsError) {
+        // FCS API failed (limit exceeded or not configured), use alternative
+        logger.debug('FCS API failed, using alternative news sources:', fcsError.message);
+        useForexNews = true;
       }
 
-      // Get today's events filtered by monitored currencies
-      const events = await newsClient.getTodayNews(forexPairs);
-      
-      // Format message with emoji indicators
-      const message = newsClient.formatTodayNewsForTelegram(events, forexPairs);
+      // Use alternative APIs (Finnhub/NewsAPI) for forex news
+      if (useForexNews || events.length === 0) {
+        const forexNews = await newsClient.getForexNewsFromAlternatives();
+        
+        if (forexNews.length === 0) {
+          await this.bot.sendMessage(msg.chat.id,
+            '📰 <b>Forex News - Major Pairs</b>\n\n' +
+            'No recent news found for USD, GBP, CAD, AUD, JPY.\n\n' +
+            '<i>Monitoring: USD, GBP, CAD, AUD, JPY</i>',
+            { parse_mode: 'HTML' }
+          );
+          return;
+        }
 
-      await this.bot.sendMessage(msg.chat.id, message, { parse_mode: 'HTML' });
+        const message = newsClient.formatForexNewsForTelegram(forexNews);
+        await this.bot.sendMessage(msg.chat.id, message, { parse_mode: 'HTML' });
+      }
+
     } catch (error) {
       logger.error('Error in /news command:', error.message);
 
-      if (error.message.includes('not configured')) {
-        await this.bot.sendMessage(msg.chat.id,
-          '⚠️ Economic calendar requires FCS API key.\n\n' +
-          'Get free key: https://fcsapi.com/register\n' +
-          'Add to .env: FCS_API_KEY=your_key');
-      } else {
-        await this.bot.sendMessage(msg.chat.id,
-          `❌ Failed to fetch news. ${error.message}`);
-      }
+      await this.bot.sendMessage(msg.chat.id,
+        `❌ Failed to fetch news. ${error.message}\n\n` +
+        `Tried: FCS API → Finnhub → NewsAPI`,
+        { parse_mode: 'HTML' }
+      );
     }
   }
 
@@ -1672,6 +1692,80 @@ ${trendEmoji} <b>Trend: ${analysis.trend}</b>
 
     await this.bot.sendMessage(msg.chat.id, message, { parse_mode: 'HTML' });
     logger.info(`Sent chat ID to ${chatTitle}: ${chatId}`);
+  }
+
+  /**
+   * Handle /entry command - Start monitoring a pair for entry signal
+   * Usage: /entry eurusd or /entry eur/usd
+   */
+  async handleEntry(msg, symbolInput) {
+    const chatId = msg.chat.id;
+    
+    try {
+      // Normalize symbol input (remove spaces, handle / separator)
+      let symbol = symbolInput.trim().toUpperCase().replace(/[\/\s]/g, '');
+      
+      // Try to find the symbol in active zones
+      const allZones = await zoneManager.getAllActiveZones();
+      let foundZone = null;
+      let exchange = null;
+      
+      // Try exact match first
+      for (const zone of allZones) {
+        const zoneSymbol = zone.symbol.replace('frx', '').replace(/(.{3})(.{3})/, '$1$2');
+        const zoneSymbolWithSlash = zone.symbol.replace('frx', '').replace(/(.{3})(.{3})/, '$1/$2');
+        
+        if (zone.symbol.toUpperCase() === symbol ||
+            zoneSymbol.toUpperCase() === symbol ||
+            zoneSymbolWithSlash.toUpperCase().replace(/\//g, '') === symbol) {
+          foundZone = zone;
+          exchange = zone.exchange;
+          symbol = zone.symbol; // Use the exact symbol from zone
+          break;
+        }
+      }
+      
+      // Try with frx prefix for forex
+      if (!foundZone && !symbol.startsWith('FRX') && !symbol.startsWith('1HZ') && !symbol.startsWith('R_')) {
+        if (symbol.length === 6 && /^[A-Z]{6}$/.test(symbol)) {
+          const frxSymbol = 'FRX' + symbol;
+          for (const zone of allZones) {
+            if (zone.symbol.toUpperCase() === frxSymbol) {
+              foundZone = zone;
+              exchange = zone.exchange;
+              symbol = zone.symbol;
+              break;
+            }
+          }
+        }
+      }
+      
+      if (!foundZone) {
+        await this.bot.sendMessage(chatId,
+          `❌ No active zone found for ${symbolInput}.\n\n` +
+          `Use /active_signals to see all available zones.`
+        );
+        return;
+      }
+      
+      // Add to entry monitoring
+      const result = await entryMonitor.addPair(
+        symbol,
+        exchange,
+        foundZone.type, // 'discount' or 'premium'
+        chatId
+      );
+      
+      await this.bot.sendMessage(chatId, result.message, { parse_mode: 'HTML' });
+      
+    } catch (error) {
+      logger.error('Error in /entry command:', error.message);
+      await this.bot.sendMessage(chatId,
+        `❌ Error: ${error.message}\n\n` +
+        `Usage: /entry eurusd or /entry eur/usd\n` +
+        `Make sure the pair has an active zone (use /active_signals to check).`
+      );
+    }
   }
 
   /**

@@ -6,6 +6,7 @@ import stateManager from './utils/stateManager.js';
 import trendingScanner from './schedulers/trendingScanner.js';
 import zoneScanner from './schedulers/zoneScanner.js';
 import newsScanner from './schedulers/newsScanner.js';
+import entryMonitor from './schedulers/entryMonitor.js';
 // import conditionScanner from './schedulers/conditionScanner.js'; // Disabled - replaced by zone scanner
 // import confirmationMonitor from './schedulers/confirmationMonitor.js'; // Disabled - not used in zone detection
 // import activeMonitor from './schedulers/activeMonitor.js'; // Disabled - not used in zone detection
@@ -47,6 +48,7 @@ async function main() {
     trendingScanner.start();      // Runs at 00:00 UTC daily
     zoneScanner.start();           // Runs every hour (1h timeframe)
     newsScanner.start();           // Runs at 06:00 UTC daily
+    entryMonitor.start();          // Monitors pairs for entry signals on 15m timeframe
 
     // Broadcast startup notification to all subscribed chats
     try {
@@ -69,6 +71,7 @@ async function main() {
     logger.info('  ⏰ Trending scan: 00:00 UTC daily');
     logger.info('  ⏰ Zone detection: Every hour (1h timeframe)');
     logger.info('  ⏰ Economic news: 06:00 UTC daily');
+    logger.info('  ⏰ Entry monitor: Continuous (15m SuperTrend)');
     logger.info('');
     logger.info('💬 Telegram bot active');
     logger.info('🟢🔴 Ready to detect premium/discount zones!');
@@ -77,6 +80,7 @@ async function main() {
     process.on('SIGINT', async () => {
       logger.info('');
       logger.info('Shutting down gracefully...');
+      entryMonitor.stop();
       krakenClient.close();
       derivClient.close();
       logger.success('✅ Bot stopped');

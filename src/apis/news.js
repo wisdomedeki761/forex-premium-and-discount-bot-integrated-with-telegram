@@ -1,6 +1,10 @@
 import axios from 'axios';
 import config from '../config.js';
 import logger from '../utils/logger.js';
+import finnhubClient from './finnhub.js';
+import newsApiClient from './newsApi.js';
+import twelveDataClient from './twelveData.js';
+import twelveDataClient from './twelveData.js';
 
 /**
  * FCS API for Economic Calendar & News
@@ -62,7 +66,8 @@ export class NewsClient {
   }
 
   /**
-   * Get today's economic calendar events filtered by monitored currencies
+   * Get today's economic calendar events for major currencies
+   * Hardcoded to monitor: USD, GBP, CAD, AUD, JPY
    */
   async getTodayNews(forexPairs = []) {
     if (!this.apiKey) {
@@ -90,14 +95,14 @@ export class NewsClient {
 
       const events = response.data.response || [];
 
-      // Extract currencies from forex pairs
-      const monitoredCurrencies = this.extractCurrenciesFromPairs(forexPairs);
-      const monitoredCountryCodes = this.getCountryCodesForCurrencies(monitoredCurrencies);
+      // Hardcoded major currencies: USD, GBP, CAD, AUD, JPY
+      // Country codes for these currencies
+      const majorCountryCodes = ['US', 'UK', 'GB', 'CA', 'AU', 'JP'];
+      
+      logger.debug(`Monitoring major currencies: USD, GBP, CAD, AUD, JPY`);
+      logger.debug(`Monitoring countries: ${majorCountryCodes.join(', ')}`);
 
-      logger.debug(`Monitoring currencies: ${monitoredCurrencies.join(', ')}`);
-      logger.debug(`Monitoring countries: ${monitoredCountryCodes.join(', ')}`);
-
-      // Filter for high and medium impact events from monitored countries
+      // Filter for high and medium impact events from major countries
       const filtered = events.filter(event => {
         const impact = event.impact?.toLowerCase();
         const country = event.country?.toUpperCase();
@@ -105,15 +110,8 @@ export class NewsClient {
         // High or medium impact only
         if (impact !== 'high' && impact !== 'medium') return false;
 
-        // If no pairs specified, use default list
-        if (monitoredCountryCodes.length === 0) {
-          const defaultCountries = ['US', 'EU', 'UK', 'GB', 'JP', 'AU', 'CA', 'NZ', 'CH', 'CN',
-            'DE', 'FR', 'IT', 'ES', 'NL', 'BE', 'AT', 'IE', 'PT', 'FI', 'GR'];
-          return defaultCountries.includes(country);
-        }
-
-        // Check if country is in our monitored list
-        return monitoredCountryCodes.includes(country);
+        // Check if country is in our major currencies list
+        return majorCountryCodes.includes(country);
       });
 
       // Sort by time, then by impact (high first)
@@ -134,6 +132,7 @@ export class NewsClient {
 
   /**
    * Get events happening in the next hour (for 1-hour-before notifications)
+   * Hardcoded to monitor: USD, GBP, CAD, AUD, JPY
    */
   async getUpcomingEventsInNextHour(forexPairs = []) {
     if (!this.apiKey) {
@@ -161,9 +160,8 @@ export class NewsClient {
 
       const events = response.data.response || [];
 
-      // Extract currencies from forex pairs
-      const monitoredCurrencies = this.extractCurrenciesFromPairs(forexPairs);
-      const monitoredCountryCodes = this.getCountryCodesForCurrencies(monitoredCurrencies);
+      // Hardcoded major currencies: USD, GBP, CAD, AUD, JPY
+      const majorCountryCodes = ['US', 'UK', 'GB', 'CA', 'AU', 'JP'];
 
       // Filter events happening in the next hour
       const upcomingEvents = events.filter(event => {
@@ -173,14 +171,8 @@ export class NewsClient {
         // High or medium impact only
         if (impact !== 'high' && impact !== 'medium') return false;
 
-        // Check country
-        if (monitoredCountryCodes.length > 0 && !monitoredCountryCodes.includes(country)) {
-          return false;
-        } else if (monitoredCountryCodes.length === 0) {
-          const defaultCountries = ['US', 'EU', 'UK', 'GB', 'JP', 'AU', 'CA', 'NZ', 'CH', 'CN',
-            'DE', 'FR', 'IT', 'ES', 'NL', 'BE', 'AT', 'IE', 'PT', 'FI', 'GR'];
-          if (!defaultCountries.includes(country)) return false;
-        }
+        // Check if country is in our major currencies list
+        if (!majorCountryCodes.includes(country)) return false;
 
         // Parse event time and check if it's in the next hour
         // FCS API returns date in format "2025-12-08" and time in format "08:30"
@@ -383,16 +375,12 @@ export class NewsClient {
     if (!events || events.length === 0) {
       let message = '📰 <b>Economic Calendar - Today</b>\n\n';
       message += 'No high/medium impact events scheduled for today.\n\n';
-      
-      if (forexPairs.length > 0) {
-        const currencies = this.extractCurrenciesFromPairs(forexPairs);
-        message += `<i>Monitoring currencies: ${currencies.join(', ')}</i>`;
-      }
+      message += `<i>Monitoring: USD, GBP, CAD, AUD, JPY</i>`;
       
       return `<blockquote>${message}</blockquote>`;
     }
 
-    // Filter events for today only
+    // Filter events for today only (including past events)
     const today = new Date().toISOString().split('T')[0];
     const todayEvents = events.filter(e => {
       const eventDate = e.date || e.event_date || today;
@@ -402,23 +390,16 @@ export class NewsClient {
     if (todayEvents.length === 0) {
       let message = '📰 <b>Economic Calendar - Today</b>\n\n';
       message += 'No high/medium impact events scheduled for today.\n\n';
-      
-      if (forexPairs.length > 0) {
-        const currencies = this.extractCurrenciesFromPairs(forexPairs);
-        message += `<i>Monitoring currencies: ${currencies.join(', ')}</i>`;
-      }
+      message += `<i>Monitoring: USD, GBP, CAD, AUD, JPY</i>`;
       
       return `<blockquote>${message}</blockquote>`;
     }
 
     let message = '📰 <b>Economic Calendar - Today</b>\n\n';
     
-    // Show monitored pairs/currencies
-    if (forexPairs.length > 0) {
-      const currencies = this.extractCurrenciesFromPairs(forexPairs);
-      message += `<b>📊 Monitoring:</b> ${currencies.join(', ')}\n`;
-      message += `<b>📅 Date:</b> ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}\n\n`;
-    }
+    // Show monitored currencies
+    message += `<b>📊 Monitoring:</b> USD, GBP, CAD, AUD, JPY\n`;
+    message += `<b>📅 Date:</b> ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}\n\n`;
 
     // Group by impact
     const highImpact = todayEvents.filter(e => e.impact?.toLowerCase() === 'high');
@@ -458,6 +439,209 @@ export class NewsClient {
     return `${emoji} <b>${time} UTC</b> | ${country.toUpperCase()}\n` +
            `   ${title}\n` +
            `   Forecast: <code>${forecast}</code> | Previous: <code>${previous}</code>\n\n`;
+  }
+
+  /**
+   * Get forex news from ALL available APIs with comprehensive fallback chain
+   * Hardcoded to major pairs: USD, GBP, CAD, AUD, JPY
+   * Fallback order: FCS → Finnhub → NewsAPI
+   * Note: Alpha Vantage and Twelve Data don't have news endpoints (only technical data)
+   */
+  async getForexNewsFromAlternatives() {
+    const majorPairs = ['USD', 'GBP', 'CAD', 'AUD', 'JPY'];
+    const majorPairQuery = majorPairs.join(' OR ');
+    
+    // Helper function to filter news for major pairs
+    const filterForMajorPairs = (items, getTextFn) => {
+      return items.filter(item => {
+        const text = getTextFn(item).toUpperCase();
+        return majorPairs.some(pair => text.includes(pair));
+      });
+    };
+
+    // 1. Try FCS API (economic calendar) - Best for scheduled events
+    try {
+      if (this.apiKey) {
+        const today = new Date().toISOString().split('T')[0];
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowStr = tomorrow.toISOString().split('T')[0];
+
+        const response = await axios.get(`${this.baseUrl}/forex/economy_cal`, {
+          params: {
+            access_key: this.apiKey,
+            from: today,
+            to: tomorrowStr
+          },
+          timeout: 10000
+        });
+
+        if (response.data && response.data.status !== false && response.data.response) {
+          const events = response.data.response || [];
+          const majorCountryCodes = ['US', 'UK', 'GB', 'CA', 'AU', 'JP'];
+          
+          const filtered = events.filter(event => {
+            const impact = event.impact?.toLowerCase();
+            const country = event.country?.toUpperCase();
+            if (impact !== 'high' && impact !== 'medium') return false;
+            return majorCountryCodes.includes(country);
+          });
+
+          if (filtered.length > 0) {
+            logger.info(`✅ FCS API: Found ${filtered.length} economic events`);
+            return filtered.map((event, index) => ({
+              id: index + 1,
+              title: event.title || event.event || 'Economic Event',
+              summary: `Forecast: ${event.forecast || '-'} | Previous: ${event.previous || '-'}`,
+              source: event.country || 'N/A',
+              url: null,
+              datetime: this.parseEventTime(event.time, event.date || today) || new Date(),
+              sentiment: 'neutral',
+              impact: event.impact?.toLowerCase() || 'medium',
+              type: 'economic_calendar'
+            }));
+          }
+        }
+      }
+    } catch (error) {
+      logger.debug(`FCS API failed (${error.message}), trying Finnhub...`);
+    }
+
+    // 2. Try Finnhub (forex market news) - 60 calls/minute
+    try {
+      if (finnhubClient.isConfigured()) {
+        const finnhubNews = await finnhubClient.getMarketNews('forex');
+        
+        const filteredNews = filterForMajorPairs(finnhubNews, item => 
+          item.headline + ' ' + item.summary
+        );
+        
+        if (filteredNews.length > 0) {
+          logger.info(`✅ Finnhub: Found ${filteredNews.length} news items`);
+          return filteredNews.map((item, index) => ({
+            id: index + 1,
+            title: item.headline,
+            summary: item.summary,
+            source: item.source,
+            url: item.url,
+            datetime: new Date(item.datetime * 1000),
+            sentiment: item.sentiment,
+            impact: item.sentiment === 'positive' ? 'high' : item.sentiment === 'negative' ? 'high' : 'medium',
+            type: 'forex_news'
+          }));
+        }
+      }
+    } catch (error) {
+      logger.debug(`Finnhub failed (${error.message}), trying NewsAPI...`);
+    }
+    
+    // 3. Try NewsAPI (general financial news) - 100 requests/day
+    try {
+      if (newsApiClient.isConfigured()) {
+        const newsApiArticles = await newsApiClient.getFinancialNews(
+          `${majorPairQuery} forex OR currency OR exchange rate OR central bank OR interest rate`,
+          25
+        );
+        
+        const filteredNews = filterForMajorPairs(newsApiArticles, article => 
+          article.title + ' ' + (article.description || '')
+        );
+        
+        if (filteredNews.length > 0) {
+          logger.info(`✅ NewsAPI: Found ${filteredNews.length} news items`);
+          return filteredNews.map((article, index) => ({
+            id: index + 1,
+            title: article.title,
+            summary: article.description,
+            source: article.source,
+            url: article.url,
+            datetime: new Date(article.publishedAt),
+            sentiment: 'neutral',
+            impact: 'medium',
+            type: 'forex_news'
+          }));
+        }
+      }
+    } catch (error) {
+      logger.debug(`NewsAPI failed (${error.message})`);
+    }
+
+    // Note: Alpha Vantage and Twelve Data don't have news endpoints
+    // Alpha Vantage: Only technical analysis (SMA, EMA, RSI, MACD) - no news
+    // Twelve Data: Only quotes and technical indicators - no news
+    
+    logger.warn('All news APIs exhausted: FCS → Finnhub → NewsAPI');
+    return [];
+  }
+
+  /**
+   * Format forex news for Telegram command (/news)
+   * Shows news for major pairs: USD, GBP, CAD, AUD, JPY
+   */
+  formatForexNewsForTelegram(newsItems) {
+    if (!newsItems || newsItems.length === 0) {
+      return '<blockquote>📰 <b>Forex News - Major Pairs</b>\n\n' +
+             'No recent news found for USD, GBP, CAD, AUD, JPY.\n\n' +
+             '<i>Monitoring: USD, GBP, CAD, AUD, JPY</i></blockquote>';
+    }
+
+    let message = '📰 <b>Forex News - Major Pairs</b>\n\n';
+    message += '<b>📊 Monitoring:</b> USD, GBP, CAD, AUD, JPY\n';
+    message += `<b>📅 Date:</b> ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}\n\n`;
+
+    // Group by sentiment
+    const positiveNews = newsItems.filter(n => n.sentiment === 'positive');
+    const negativeNews = newsItems.filter(n => n.sentiment === 'negative');
+    const neutralNews = newsItems.filter(n => n.sentiment === 'neutral' || !n.sentiment);
+
+    // Show positive news
+    if (positiveNews.length > 0) {
+      message += '🟢 <b>POSITIVE SENTIMENT</b>\n';
+      positiveNews.slice(0, 5).forEach((item, index) => {
+        const time = item.datetime ? new Date(item.datetime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : 'N/A';
+        message += `${index + 1}. <b>${time}</b> | ${item.source || 'N/A'}\n`;
+        message += `   ${item.title}\n`;
+        if (item.summary) {
+          const summary = item.summary.replace(/<[^>]*>/g, '').substring(0, 80);
+          message += `   <i>${summary}...</i>\n`;
+        }
+        message += '\n';
+      });
+      message += '\n';
+    }
+
+    // Show negative news
+    if (negativeNews.length > 0) {
+      message += '🔴 <b>NEGATIVE SENTIMENT</b>\n';
+      negativeNews.slice(0, 5).forEach((item, index) => {
+        const time = item.datetime ? new Date(item.datetime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : 'N/A';
+        message += `${index + 1}. <b>${time}</b> | ${item.source || 'N/A'}\n`;
+        message += `   ${item.title}\n`;
+        if (item.summary) {
+          const summary = item.summary.replace(/<[^>]*>/g, '').substring(0, 80);
+          message += `   <i>${summary}...</i>\n`;
+        }
+        message += '\n';
+      });
+      message += '\n';
+    }
+
+    // Show neutral news
+    if (neutralNews.length > 0 && (positiveNews.length === 0 && negativeNews.length === 0)) {
+      message += '🟡 <b>RECENT NEWS</b>\n';
+      neutralNews.slice(0, 10).forEach((item, index) => {
+        const time = item.datetime ? new Date(item.datetime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : 'N/A';
+        message += `${index + 1}. <b>${time}</b> | ${item.source || 'N/A'}\n`;
+        message += `   ${item.title}\n`;
+        if (item.summary) {
+          const summary = item.summary.replace(/<[^>]*>/g, '').substring(0, 80);
+          message += `   <i>${summary}...</i>\n`;
+        }
+        message += '\n';
+      });
+    }
+
+    return `<blockquote>${message}</blockquote>`;
   }
 
   /**

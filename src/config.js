@@ -1,5 +1,17 @@
 import dotenv from 'dotenv';
+// Load .env but preserve existing env vars (allows test scripts to hardcode values)
+const existingEnvVars = {};
+// Save any existing env vars before loading .env
+['ALPHA_VANTAGE_API_KEY', 'TWELVE_DATA_API_KEY', 'FINNHUB_API_KEY', 'FCS_API_KEY', 'NEWS_API_KEY'].forEach(key => {
+  if (process.env[key]) {
+    existingEnvVars[key] = process.env[key];
+  }
+});
 dotenv.config();
+// Restore hardcoded values if they existed before dotenv.config()
+Object.keys(existingEnvVars).forEach(key => {
+  process.env[key] = existingEnvVars[key];
+});
 
 export const config = {
   firebase: {

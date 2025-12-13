@@ -163,6 +163,30 @@ class ZoneManager {
   }
 
   /**
+   * Check if a zone was recently expired (within last hour)
+   * Prevents immediate reactivation after expiration
+   */
+  async wasRecentlyExpired(symbol, hoursAgo = 1) {
+    try {
+      const db = this.getDb();
+      const cutoffTime = new Date();
+      cutoffTime.setHours(cutoffTime.getHours() - hoursAgo);
+
+      const snapshot = await db.collection('zone_history')
+        .where('symbol', '==', symbol)
+        .where('expiredAt', '>=', cutoffTime.toISOString())
+        .orderBy('expiredAt', 'desc')
+        .limit(1)
+        .get();
+
+      return !snapshot.empty;
+    } catch (error) {
+      logger.error(`Error checking recent expiration for ${symbol}:`, error.message);
+      return false;
+    }
+  }
+
+  /**
    * Get all active zones
    */
   async getAllActiveZones() {
