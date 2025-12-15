@@ -4,7 +4,6 @@ import logger from '../utils/logger.js';
 import finnhubClient from './finnhub.js';
 import newsApiClient from './newsApi.js';
 import twelveDataClient from './twelveData.js';
-import twelveDataClient from './twelveData.js';
 
 /**
  * FCS API for Economic Calendar & News
@@ -98,7 +97,7 @@ export class NewsClient {
       // Hardcoded major currencies: USD, GBP, CAD, AUD, JPY
       // Country codes for these currencies
       const majorCountryCodes = ['US', 'UK', 'GB', 'CA', 'AU', 'JP'];
-      
+
       logger.debug(`Monitoring major currencies: USD, GBP, CAD, AUD, JPY`);
       logger.debug(`Monitoring countries: ${majorCountryCodes.join(', ')}`);
 
@@ -399,7 +398,7 @@ export class NewsClient {
     
     // Show monitored currencies
     message += `<b>📊 Monitoring:</b> USD, GBP, CAD, AUD, JPY\n`;
-    message += `<b>📅 Date:</b> ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}\n\n`;
+      message += `<b>📅 Date:</b> ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}\n\n`;
 
     // Group by impact
     const highImpact = todayEvents.filter(e => e.impact?.toLowerCase() === 'high');

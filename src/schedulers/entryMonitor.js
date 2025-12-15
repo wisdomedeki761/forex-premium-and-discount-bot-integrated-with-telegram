@@ -1,3 +1,4 @@
+import cron from 'node-cron';
 import logger from '../utils/logger.js';
 import SuperTrendCalculator from '../indicators/supertrend.js';
 import derivClient from '../apis/deriv.js';
@@ -9,41 +10,129 @@ import { saveEntrySignal, getNextSignalId } from '../db/firestore.js';
 /**
  * Entry Monitor
  * Monitors pairs for SuperTrend trend changes on 15-minute timeframe
+ * Checks every 15 minutes when new candles form
  */
 class EntryMonitor {
   constructor() {
     this.monitoringPairs = new Map(); // Map<symbol, { chatId, zoneType, exchange, startedAt, lastCandleTimestamp }>
     this.supertrend = new SuperTrendCalculator(5, 3); // ATR period 5, multiplier 3
-    this.checkInterval = 60000; // Check every 60 seconds to see if new candle formed
-    this.intervalId = null;
+    this.cronJob = null;
   }
 
   /**
-   * Start monitoring
+   * Start monitoring - checks every 15 minutes
    */
   start() {
-    if (this.intervalId) {
+    if (this.cronJob) {
       logger.warn('Entry monitor already running');
       return;
     }
 
     logger.info('Starting entry monitor...');
-    this.intervalId = setInterval(() => this.checkForNewCandles(), this.checkInterval);
     
-    // Run immediately
+    // Schedule to run every 15 minutes (at :00, :15, :30, :45 of each hour)
+    this.cronJob = cron.schedule('*/15 * * * *', () => {
+      this.checkForNewCandles();
+    });
+    
+    // Run immediately after 5 seconds
     setTimeout(() => this.checkForNewCandles(), 5000);
     
-    logger.success('✅ Entry monitor started (checking for new 15m candles)');
+    logger.success('✅ Entry monitor started (checking every 15 minutes for new candles)');
   }
 
   /**
    * Stop monitoring
    */
   stop() {
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
+    if (this.cronJob) {
+      this.cronJob.stop();
+      this.cronJob = null;
       logger.info('Entry monitor stopped');
+    }
+  }
+
+  /**
+   * Add a pair to monitoring manually (without requiring active zone)
+   * Used for owner-only manual entry commands
+   */
+  async addPairManual(symbol, exchange, direction, chatId) {
+    try {
+      // Normalize symbol
+      const normalizedSymbol = this.normalizeSymbol(symbol, exchange);
+      
+      // Determine zone type based on direction
+      // "up" = BUY = discount zone (waiting for uptrend)
+      // "down" = SELL = premium zone (waiting for downtrend)
+      const zoneType = direction.toLowerCase() === 'up' ? 'discount' : 'premium';
+      const entryType = direction.toLowerCase() === 'up' ? 'BUY' : 'SELL';
+
+      // Fetch 15-minute candles to check current trend
+      const candles15M = await this.fetch15MCandles(normalizedSymbol, exchange);
+      if (!candles15M || candles15M.length < 10) {
+        throw new Error(`Insufficient 15-minute data for ${normalizedSymbol}`);
+      }
+
+      const supertrendResult = this.supertrend.getLatest(candles15M);
+      if (!supertrendResult) {
+        throw new Error(`Could not calculate SuperTrend for ${normalizedSymbol}`);
+      }
+
+      const currentTrend = supertrendResult.trend; // 1 = uptrend, -1 = downtrend
+
+      const displayName = this.getDisplayName(normalizedSymbol, exchange);
+
+      // Reject if already in target trend
+      if (direction.toLowerCase() === 'up' && currentTrend === 1) {
+        return {
+          success: false,
+          message: `❌ Rejected: ${displayName} is already in UPTREND.\n\n` +
+                   'Cannot start BUY entry monitoring when already in uptrend.\n' +
+                   'Wait for a downtrend first, then use the command again.'
+        };
+      }
+
+      if (direction.toLowerCase() === 'down' && currentTrend === -1) {
+        return {
+          success: false,
+          message: `❌ Rejected: ${displayName} is already in DOWNTREND.\n\n` +
+                   'Cannot start SELL entry monitoring when already in downtrend.\n' +
+                   'Wait for an uptrend first, then use the command again.'
+        };
+      }
+
+      // Get the latest candle timestamp
+      const latestCandle = candles15M[candles15M.length - 1];
+      const lastCandleTimestamp = latestCandle.timestamp || latestCandle.openTime || Date.now();
+
+      // Add to monitoring
+      this.monitoringPairs.set(normalizedSymbol, {
+        symbol: normalizedSymbol,
+        exchange,
+        zoneType,
+        chatId,
+        startedAt: new Date().toISOString(),
+        lastTrend: currentTrend,
+        lastCandleTimestamp: lastCandleTimestamp,
+        manualEntry: true, // Flag to indicate manual entry
+        entryType: entryType
+      });
+
+      logger.info(`Added ${normalizedSymbol} to manual entry monitoring (${entryType}, current trend: ${currentTrend === 1 ? 'uptrend' : 'downtrend'})`);
+
+      return {
+        success: true,
+        message: `✅ Monitoring ${this.getDisplayName(normalizedSymbol, exchange)} for ${entryType} entry.\n\n` +
+                 `Entry Type: ${entryType === 'BUY' ? '🟢 BUY' : '🔴 SELL'}\n` +
+                 `Current 15m trend: ${currentTrend === 1 ? '🟢 UPTREND' : '🔴 DOWNTREND'}\n` +
+                 `Waiting for trend change to ${direction.toLowerCase() === 'up' ? 'uptrend' : 'downtrend'}...`
+      };
+    } catch (error) {
+      logger.error(`Error adding pair to manual monitoring: ${error.message}`);
+      return {
+        success: false,
+        message: `❌ Error: ${error.message}`
+      };
     }
   }
 

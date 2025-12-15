@@ -172,15 +172,35 @@ class ZoneManager {
       const cutoffTime = new Date();
       cutoffTime.setHours(cutoffTime.getHours() - hoursAgo);
 
+      // Simplified query without orderBy to avoid index requirement
+      // Get all recent expirations for this symbol and check in memory
       const snapshot = await db.collection('zone_history')
         .where('symbol', '==', symbol)
         .where('expiredAt', '>=', cutoffTime.toISOString())
-        .orderBy('expiredAt', 'desc')
-        .limit(1)
+        .limit(10)
         .get();
 
-      return !snapshot.empty;
+      if (snapshot.empty) {
+        return false;
+      }
+
+      // Check if any expiration is recent enough
+      const now = new Date();
+      for (const doc of snapshot.docs) {
+        const expiredAt = new Date(doc.data().expiredAt);
+        const hoursDiff = (now - expiredAt) / (1000 * 60 * 60);
+        if (hoursDiff <= hoursAgo) {
+          return true;
+        }
+      }
+
+      return false;
     } catch (error) {
+      // If index error, log but don't block zone creation
+      if (error.message && error.message.includes('index')) {
+        logger.debug(`Index not created for zone_history query (non-critical): ${symbol}`);
+        return false; // Allow zone creation if index check fails
+      }
       logger.error(`Error checking recent expiration for ${symbol}:`, error.message);
       return false;
     }

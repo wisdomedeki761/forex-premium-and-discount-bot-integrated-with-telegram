@@ -71,7 +71,7 @@ async function main() {
     logger.info('  ⏰ Trending scan: 00:00 UTC daily');
     logger.info('  ⏰ Zone detection: Every hour (1h timeframe)');
     logger.info('  ⏰ Economic news: 06:00 UTC daily');
-    logger.info('  ⏰ Entry monitor: Continuous (15m SuperTrend)');
+    logger.info('  ⏰ Entry monitor: Every 15 minutes (15m SuperTrend)');
     logger.info('');
     logger.info('💬 Telegram bot active');
     logger.info('🟢🔴 Ready to detect premium/discount zones!');

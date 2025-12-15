@@ -63,12 +63,12 @@ class ActiveMonitor {
     const { symbol, exchange, signalType, entryPrice, signalId, lastUpdateSent } = state;
 
     try {
-      // Get 1m candles
+      // Get 15m candles (using 15-minute timeframe only)
       let candles;
       if (exchange === 'bybit') {
-        candles = await bybitClient.getKlines(symbol, '1', 100);
+        candles = await bybitClient.getKlines(symbol, '15', 100);
       } else if (exchange === 'deriv' || exchange === 'forex') {
-        candles = await derivClient.getCandles(symbol, 60, 100);
+        candles = await derivClient.getCandles(symbol, 900, 100); // 900s = 15m
       }
 
       if (!candles || candles.length < 70) {

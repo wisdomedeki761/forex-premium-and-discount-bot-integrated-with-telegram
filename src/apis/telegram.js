@@ -56,6 +56,8 @@ export class TelegramClient {
     this.bot.onText(/\/managepairs/, (msg) => this.handleManagePairs(msg));
     this.bot.onText(/\/trending/, (msg) => this.handleTrending(msg));
     this.bot.onText(/\/entry (.+)/, (msg, match) => this.handleEntry(msg, match[1]));
+    // Owner-only manual entry command: /entry SYMBOL up or /entry SYMBOL down
+    this.bot.onText(/\/entry (.+?)\s+(up|down)$/i, (msg, match) => this.handleEntryManual(msg, match[1], match[2]));
 
     // Dedicated forex pair commands (case-insensitive)
     this.bot.onText(/\/eurusd/i, (msg) => this.handlePairDirect(msg, 'frxEURUSD'));
@@ -73,6 +75,8 @@ export class TelegramClient {
     this.bot.onText(/\/ask (.+)/, (msg, match) => this.handleAsk(msg, match[1]));
     this.bot.onText(/\/mystats/, (msg) => this.handleMyStats(msg));
     this.bot.onText(/\/getchatid/, (msg) => this.handleGetChatId(msg));
+    this.bot.onText(/\/reset_zones/, (msg) => this.handleResetZones(msg));
+    this.bot.onText(/\/add_indices/, (msg) => this.handleAddIndices(msg));
 
     // Callback query handler for inline buttons
     this.bot.on('callback_query', (query) => this.handleCallbackQuery(query));
@@ -1221,8 +1225,8 @@ ${trendEmoji} <b>Trend: ${analysis.trend}</b>
         if (events && events.length > 0) {
           const message = newsClient.formatTodayNewsForTelegram(events, []);
           await this.bot.sendMessage(msg.chat.id, message, { parse_mode: 'HTML' });
-          return;
-        }
+        return;
+      }
       } catch (fcsError) {
         // FCS API failed (limit exceeded or not configured), use alternative
         logger.debug('FCS API failed, using alternative news sources:', fcsError.message);
@@ -1244,13 +1248,13 @@ ${trendEmoji} <b>Trend: ${analysis.trend}</b>
         }
 
         const message = newsClient.formatForexNewsForTelegram(forexNews);
-        await this.bot.sendMessage(msg.chat.id, message, { parse_mode: 'HTML' });
+      await this.bot.sendMessage(msg.chat.id, message, { parse_mode: 'HTML' });
       }
 
     } catch (error) {
       logger.error('Error in /news command:', error.message);
 
-      await this.bot.sendMessage(msg.chat.id,
+        await this.bot.sendMessage(msg.chat.id,
         `❌ Failed to fetch news. ${error.message}\n\n` +
         `Tried: FCS API → Finnhub → NewsAPI`,
         { parse_mode: 'HTML' }
@@ -1695,6 +1699,129 @@ ${trendEmoji} <b>Trend: ${analysis.trend}</b>
   }
 
   /**
+   * Handle /reset_zones command - expire all active zones (owner only)
+   */
+  async handleResetZones(msg) {
+    const chatId = msg.chat.id;
+
+    try {
+      if (config.telegram.ownerChatId && `${chatId}` !== `${config.telegram.ownerChatId}`) {
+        await this.bot.sendMessage(chatId, '❌ Only the owner can reset zones.');
+        return;
+      }
+
+      const activeZones = await zoneManager.getAllActiveZones();
+      if (!activeZones || activeZones.length === 0) {
+        await this.bot.sendMessage(chatId, 'No active zones to reset.');
+        return;
+      }
+
+      let expired = 0;
+      for (const zone of activeZones) {
+        try {
+          const symbol = zone.symbol || zone.id;
+          const reason = 'Manual reset via /reset_zones';
+          const ok = await zoneManager.expireZone(symbol, reason);
+          if (ok) expired += 1;
+        } catch (err) {
+          logger.error(`Error expiring zone ${zone.symbol}:`, err.message);
+        }
+      }
+
+      await this.bot.sendMessage(chatId, `✅ Reset complete. Expired ${expired} active zones.`);
+    } catch (error) {
+      logger.error('Error resetting zones:', error.message);
+      await this.bot.sendMessage(chatId, `❌ Error resetting zones: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle /add_indices command - Add US Tech 100 and Japan 225 to managed pairs (owner only)
+   */
+  async handleAddIndices(msg) {
+    const chatId = msg.chat.id;
+    
+    try {
+      // Check if user is owner
+      const userId = msg.from.id;
+      const ownerChatId = config.telegram.ownerChatId;
+
+      if (!ownerChatId || String(userId) !== String(ownerChatId)) {
+        await this.bot.sendMessage(chatId, '❌ This command is owner-only.');
+        return;
+      }
+
+      const { addManagedPair, getManagedPairs } = await import('../db/firestore.js');
+
+      // Indices to add
+      const indices = [
+        { symbol: 'OTC_NDX', name: 'US Tech 100' },
+        { symbol: 'OTC_N225', name: 'Japan 225' }
+      ];
+
+      const currentPairs = await getManagedPairs();
+      let added = 0;
+      let alreadyExists = 0;
+      const addedList = [];
+      const existingList = [];
+
+      for (const index of indices) {
+        if (!currentPairs.derivPairs) {
+          currentPairs.derivPairs = [];
+        }
+
+        if (currentPairs.derivPairs.includes(index.symbol)) {
+          existingList.push(index.name);
+          alreadyExists++;
+        } else {
+          await addManagedPair('deriv', index.symbol);
+          addedList.push(index.name);
+          added++;
+        }
+      }
+
+      const updatedPairs = await getManagedPairs();
+
+      let message = '<b>📊 Add Indices Result</b>\n\n';
+      
+      if (added > 0) {
+        message += `✅ <b>Added (${added}):</b>\n`;
+        addedList.forEach(name => {
+          message += `   • ${name}\n`;
+        });
+        message += '\n';
+      }
+
+      if (alreadyExists > 0) {
+        message += `⏭️  <b>Already Exists (${alreadyExists}):</b>\n`;
+        existingList.forEach(name => {
+          message += `   • ${name}\n`;
+        });
+        message += '\n';
+      }
+
+      message += `<b>📋 Current Deriv Pairs:</b>\n`;
+      if (updatedPairs.derivPairs && updatedPairs.derivPairs.length > 0) {
+        updatedPairs.derivPairs.forEach(pair => {
+          message += `   • ${pair}\n`;
+        });
+      } else {
+        message += `   <i>None</i>\n`;
+      }
+
+      if (added > 0) {
+        message += '\n✅ The bot will scan these indices on the next hourly run.';
+      }
+
+      await this.bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+      
+    } catch (error) {
+      logger.error('Error adding indices:', error.message);
+      await this.bot.sendMessage(chatId, `❌ Error: ${error.message}`);
+    }
+  }
+
+  /**
    * Handle /entry command - Start monitoring a pair for entry signal
    * Usage: /entry eurusd or /entry eur/usd
    */
@@ -1703,21 +1830,29 @@ ${trendEmoji} <b>Trend: ${analysis.trend}</b>
     
     try {
       // Normalize symbol input (remove spaces, handle / separator)
-      let symbol = symbolInput.trim().toUpperCase().replace(/[\/\s]/g, '');
+      const normalizedInput = symbolInput.trim().toUpperCase().replace(/[\/\s]/g, '');
+      let symbol = normalizedInput;
       
       // Try to find the symbol in active zones
       const allZones = await zoneManager.getAllActiveZones();
       let foundZone = null;
       let exchange = null;
       
-      // Try exact match first
+      // Try to match zones by comparing normalized symbols
       for (const zone of allZones) {
-        const zoneSymbol = zone.symbol.replace('frx', '').replace(/(.{3})(.{3})/, '$1$2');
-        const zoneSymbolWithSlash = zone.symbol.replace('frx', '').replace(/(.{3})(.{3})/, '$1/$2');
+        // Get normalized versions of zone symbol (remove frx prefix, remove slashes)
+        const zoneSymbolUpper = zone.symbol.toUpperCase();
+        const zoneSymbolNoPrefix = zoneSymbolUpper.replace(/^FRX/, '');
+        const zoneSymbolNormalized = zoneSymbolNoPrefix.replace(/[\/\s]/g, '');
         
-        if (zone.symbol.toUpperCase() === symbol ||
-            zoneSymbol.toUpperCase() === symbol ||
-            zoneSymbolWithSlash.toUpperCase().replace(/\//g, '') === symbol) {
+        // Match if:
+        // 1. Exact match (with or without FRX prefix)
+        // 2. Input matches zone symbol without prefix
+        // 3. Both normalized match (handles EUR/AUD -> EURAUD matching frxEURAUD)
+        if (zoneSymbolUpper === normalizedInput ||
+            zoneSymbolNoPrefix === normalizedInput ||
+            zoneSymbolNormalized === normalizedInput ||
+            (normalizedInput.length === 6 && zoneSymbolNoPrefix === normalizedInput)) {
           foundZone = zone;
           exchange = zone.exchange;
           symbol = zone.symbol; // Use the exact symbol from zone
@@ -1725,15 +1860,15 @@ ${trendEmoji} <b>Trend: ${analysis.trend}</b>
         }
       }
       
-      // Try with frx prefix for forex
-      if (!foundZone && !symbol.startsWith('FRX') && !symbol.startsWith('1HZ') && !symbol.startsWith('R_')) {
-        if (symbol.length === 6 && /^[A-Z]{6}$/.test(symbol)) {
-          const frxSymbol = 'FRX' + symbol;
+      // Try with frx prefix for forex if still not found
+      if (!foundZone && !normalizedInput.startsWith('FRX') && !normalizedInput.startsWith('1HZ') && !normalizedInput.startsWith('R_')) {
+        if (normalizedInput.length === 6 && /^[A-Z]{6}$/.test(normalizedInput)) {
+          const frxSymbol = 'FRX' + normalizedInput;
           for (const zone of allZones) {
             if (zone.symbol.toUpperCase() === frxSymbol) {
               foundZone = zone;
               exchange = zone.exchange;
-              symbol = zone.symbol;
+              symbol = zone.symbol; // Use the exact symbol from zone
               break;
             }
           }
@@ -1764,6 +1899,67 @@ ${trendEmoji} <b>Trend: ${analysis.trend}</b>
         `❌ Error: ${error.message}\n\n` +
         `Usage: /entry eurusd or /entry eur/usd\n` +
         `Make sure the pair has an active zone (use /active_signals to check).`
+      );
+    }
+  }
+
+  /**
+   * Handle manual entry command - Owner only
+   * Usage: /entry eurusd up or /entry eurusd down
+   */
+  async handleEntryManual(msg, symbolInput, direction) {
+    const chatId = msg.chat.id;
+    
+    try {
+      // Check if user is owner
+      const userId = msg.from.id;
+      const ownerChatId = config.telegram.ownerChatId;
+
+      if (!ownerChatId || String(userId) !== String(ownerChatId)) {
+        await this.bot.sendMessage(chatId, '❌ This command is owner-only.');
+        return;
+      }
+
+      // Validate direction
+      const dir = direction.toLowerCase();
+      if (dir !== 'up' && dir !== 'down') {
+        await this.bot.sendMessage(chatId, 
+          `❌ Invalid direction. Use "up" for BUY or "down" for SELL.\n\n` +
+          `Usage: /entry eurusd up\n` +
+          `       /entry eurusd down`
+        );
+        return;
+      }
+
+      // Normalize symbol input
+      let symbol = symbolInput.trim().toUpperCase().replace(/[\/\s]/g, '');
+      
+      // Determine exchange (assume forex for 6-letter pairs, can be enhanced)
+      let exchange = 'forex';
+      if (!symbol.startsWith('FRX') && !symbol.startsWith('1HZ') && !symbol.startsWith('R_')) {
+        if (symbol.length === 6 && /^[A-Z]{6}$/.test(symbol)) {
+          symbol = 'FRX' + symbol;
+        } else {
+          // Could be crypto or other - try to detect
+          if (symbol.includes('USDT') || symbol.includes('USDC')) {
+            exchange = 'crypto';
+          }
+        }
+      } else if (symbol.startsWith('1HZ') || symbol.startsWith('R_')) {
+        exchange = 'deriv';
+      }
+
+      // Add to entry monitoring
+      const result = await entryMonitor.addPairManual(symbol, exchange, dir, chatId);
+      
+      await this.bot.sendMessage(chatId, result.message, { parse_mode: 'HTML' });
+      
+    } catch (error) {
+      logger.error('Error in /entry manual command:', error.message);
+      await this.bot.sendMessage(chatId,
+        `❌ Error: ${error.message}\n\n` +
+        `Usage: /entry eurusd up\n` +
+        `       /entry eurusd down`
       );
     }
   }
