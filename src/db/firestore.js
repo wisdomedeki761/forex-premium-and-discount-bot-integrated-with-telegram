@@ -56,7 +56,8 @@ export const COLLECTIONS = {
   PAIR_STATES: 'pair_states',
   SIGNALS: 'signals',
   TRENDING_PAIRS: 'trending_pairs',
-  MANAGED_PAIRS: 'managed_pairs'
+  MANAGED_PAIRS: 'managed_pairs',
+  ENTRY_SIGNALS: 'entry_signals'
 };
 
 // Candle operations
@@ -256,6 +257,76 @@ export async function clearOldNotifications(daysToKeep = 7) {
   logger.info(`Cleared ${snapshot.size} old news notifications`);
 }
 
+// Entry signal operations
+export async function saveEntrySignal(signal) {
+  const docId = `entry_${signal.id}_${Date.now()}`;
+  await db.collection(COLLECTIONS.ENTRY_SIGNALS).doc(docId).set({
+    ...signal,
+    updatedAt: Date.now()
+  });
+}
+
+export async function getEntrySignal(signalId) {
+  const snapshot = await db.collection(COLLECTIONS.ENTRY_SIGNALS)
+    .where('id', '==', signalId)
+    .limit(1)
+    .get();
+  
+  if (snapshot.empty) {
+    return null;
+  }
+  
+  return snapshot.docs[0].data();
+}
+
+export async function getAllEntrySignals(limit = 100) {
+  const snapshot = await db.collection(COLLECTIONS.ENTRY_SIGNALS)
+    .orderBy('createdAt', 'desc')
+    .limit(limit)
+    .get();
+  
+  return snapshot.docs.map(doc => doc.data());
+}
+
+export async function getNextSignalId() {
+  try {
+    // Get the highest signal ID
+    const snapshot = await db.collection(COLLECTIONS.ENTRY_SIGNALS)
+      .orderBy('id', 'desc')
+      .limit(1)
+      .get();
+    
+    if (snapshot.empty) {
+      return 1; // First signal
+    }
+    
+    const lastSignal = snapshot.docs[0].data();
+    return (lastSignal.id || 0) + 1;
+  } catch (error) {
+    logger.error('Error getting next signal ID:', error.message);
+    // Fallback: use timestamp-based ID
+    return Math.floor(Date.now() / 1000) % 1000000;
+  }
+}
+
+export async function updateEntrySignal(signalId, updates) {
+  const snapshot = await db.collection(COLLECTIONS.ENTRY_SIGNALS)
+    .where('id', '==', signalId)
+    .limit(1)
+    .get();
+  
+  if (snapshot.empty) {
+    return false;
+  }
+  
+  await snapshot.docs[0].ref.update({
+    ...updates,
+    updatedAt: Date.now()
+  });
+  
+  return true;
+}
+
 export default {
   initializeFirestore,
   getFirestore,
@@ -276,5 +347,10 @@ export default {
   markEventNotified,
   isEventNotified,
   getNotifiedEventsToday,
-  clearOldNotifications
+  clearOldNotifications,
+  saveEntrySignal,
+  getEntrySignal,
+  getAllEntrySignals,
+  getNextSignalId,
+  updateEntrySignal
 };

@@ -75,19 +75,26 @@ class ZoneScanner {
         crypto: []
       };
 
+      // Track validated zones (zones that were successfully checked this scan)
+      const validatedZones = {
+        forex: [],
+        deriv: [],
+        crypto: []
+      };
+
       let zonesDetected = 0;
 
       for (const { symbol, exchange } of allPairs) {
         try {
-          const result = await this.scanPair(symbol, exchange, newZones);
+          const result = await this.scanPair(symbol, exchange, newZones, validatedZones);
           if (result) zonesDetected++;
         } catch (error) {
           logger.error(`Error scanning ${symbol}:`, error.message);
         }
       }
 
-      // Get all active zones (including existing ones) and send consolidated message
-      await this.sendConsolidatedZoneMessage(newZones);
+      // Only send message with zones that were successfully validated this scan
+      await this.sendConsolidatedZoneMessage(validatedZones);
 
       logger.success(`1h zone scan completed: ${zonesDetected} zones detected`);
     } catch (error) {
@@ -98,9 +105,24 @@ class ZoneScanner {
   /**
    * Scan individual pair for premium/discount zones
    */
-  async scanPair(symbol, exchange, newZones) {
+  async scanPair(symbol, exchange, newZones, validatedZones) {
     try {
-      // Get 1-hour candles (need at least 100 for cascading EMAs)
+      // FIRST: Check if there's an active zone and if it's expired (>24 hours)
+      // Use UTC time directly - this ensures zones expire even if candlestick API fails
+      const currentZone = await zoneManager.getActiveZone(symbol);
+      if (currentZone) {
+        const createdAt = new Date(currentZone.createdAt);
+        const now = new Date(); // Current UTC time
+        const hoursSinceCreation = (now - createdAt) / (1000 * 60 * 60);
+        
+        if (hoursSinceCreation >= 24) {
+          logger.info(`⏰ ${currentZone.type.toUpperCase()} zone for ${symbol} expired: 24 hours elapsed (UTC time check)`);
+          await zoneManager.expireZone(symbol, '24 hour expiration');
+          return false; // Zone expired, no need to fetch candles
+        }
+      }
+
+      // NOW proceed to get candlestick data (only if zone hasn't expired)
       let candles;
       if (exchange === 'binance') {
         candles = await binanceClient.getKlines(symbol, '1h', 200);
@@ -112,6 +134,13 @@ class ZoneScanner {
 
       if (!candles || candles.length < 100) {
         logger.debug(`Not enough 1h candles for ${symbol}`);
+        
+        // If there's an active zone but we can't validate it, expire it
+        if (currentZone) {
+          logger.warn(`⚠️ Cannot validate zone for ${symbol}: insufficient candlestick data. Expiring zone.`);
+          await zoneManager.expireZone(symbol, 'Cannot validate: insufficient candlestick data');
+        }
+        
         return false;
       }
 
@@ -122,19 +151,52 @@ class ZoneScanner {
       const indicators = premiumDiscountCalculator.calculate(candles);
       if (!indicators) {
         logger.debug(`Cannot calculate indicators for ${symbol}`);
+        
+        // If there's an active zone but we can't calculate indicators, expire it
+        if (currentZone) {
+          logger.warn(`⚠️ Cannot validate zone for ${symbol}: cannot calculate indicators. Expiring zone.`);
+          await zoneManager.expireZone(symbol, 'Cannot validate: cannot calculate indicators');
+        }
+        
         return false;
       }
 
-      // Get current zone status
-      const currentZone = await zoneManager.getActiveZone(symbol);
       const currentPrice = candles[candles.length - 1].close;
 
       // Get zone status
       const zoneStatus = premiumDiscountCalculator.getZoneStatus(indicators);
 
-      // If there's an active zone, check if it's still valid
+      // If there's an active zone, validate it (24-hour check already done above using UTC)
       if (currentZone) {
-        return await this.validateZone(symbol, exchange, indicators, currentZone, currentPrice);
+        const isValid = await this.validateZone(symbol, exchange, indicators, currentZone, currentPrice);
+        
+        // If zone is still valid, add it to validated zones list
+        if (isValid) {
+          const displaySymbol = zoneManager.getDisplayName(symbol, exchange);
+          const zoneData = {
+            symbol,
+            displaySymbol,
+            type: currentZone.type,
+            price: currentZone.price
+          };
+          
+          if (exchange === 'forex') {
+            validatedZones.forex.push(zoneData);
+          } else if (exchange === 'deriv') {
+            validatedZones.deriv.push(zoneData);
+          } else {
+            validatedZones.crypto.push(zoneData);
+          }
+        }
+        
+        return isValid;
+      }
+
+      // Check if zone was recently expired (within last hour) - prevent immediate reactivation
+      const recentlyExpired = await zoneManager.wasRecentlyExpired(symbol, 1);
+      if (recentlyExpired) {
+        logger.debug(`Skipping ${symbol}: Zone was recently expired, waiting before reactivation`);
+        return false;
       }
 
       // Check for new discount zone
@@ -151,14 +213,19 @@ class ZoneScanner {
           timestamp: new Date().toISOString()
         });
 
-        // Collect zone data instead of sending immediately
+        // Collect zone data for new zones
         const displaySymbol = zoneManager.getDisplayName(symbol, exchange);
+        const zoneData = { symbol, displaySymbol, type: 'discount', price: currentPrice };
+        
         if (exchange === 'forex') {
-          newZones.forex.push({ symbol, displaySymbol, type: 'discount', price: currentPrice });
+          newZones.forex.push(zoneData);
+          validatedZones.forex.push(zoneData);
         } else if (exchange === 'deriv') {
-          newZones.deriv.push({ symbol, displaySymbol, type: 'discount', price: currentPrice });
+          newZones.deriv.push(zoneData);
+          validatedZones.deriv.push(zoneData);
         } else {
-          newZones.crypto.push({ symbol, displaySymbol, type: 'discount', price: currentPrice });
+          newZones.crypto.push(zoneData);
+          validatedZones.crypto.push(zoneData);
         }
 
         return true;
@@ -178,14 +245,19 @@ class ZoneScanner {
           timestamp: new Date().toISOString()
         });
 
-        // Collect zone data instead of sending immediately
+        // Collect zone data for new zones
         const displaySymbol = zoneManager.getDisplayName(symbol, exchange);
+        const zoneData = { symbol, displaySymbol, type: 'premium', price: currentPrice };
+        
         if (exchange === 'forex') {
-          newZones.forex.push({ symbol, displaySymbol, type: 'premium', price: currentPrice });
+          newZones.forex.push(zoneData);
+          validatedZones.forex.push(zoneData);
         } else if (exchange === 'deriv') {
-          newZones.deriv.push({ symbol, displaySymbol, type: 'premium', price: currentPrice });
+          newZones.deriv.push(zoneData);
+          validatedZones.deriv.push(zoneData);
         } else {
-          newZones.crypto.push({ symbol, displaySymbol, type: 'premium', price: currentPrice });
+          newZones.crypto.push(zoneData);
+          validatedZones.crypto.push(zoneData);
         }
 
         return true;
@@ -203,6 +275,9 @@ class ZoneScanner {
    */
   async validateZone(symbol, exchange, indicators, zone, currentPrice) {
     const zoneType = zone.type;
+
+    // NOTE: 24-hour expiration check is now done in scanPair() BEFORE getting candles
+    // using UTC time directly, so zones expire even when candlestick data is unavailable
 
     // Check if EMAs have crossed (zone invalidated)
     let emaValid = false;
@@ -245,40 +320,14 @@ class ZoneScanner {
 
   /**
    * Format and send consolidated zone message
+   * Only displays zones that were successfully validated in the current scan
    */
-  async sendConsolidatedZoneMessage(newZones) {
+  async sendConsolidatedZoneMessage(validatedZones) {
     try {
-      // Get all active zones from database (including existing ones)
-      const allActiveZones = await zoneManager.getAllActiveZones();
+      // Use only validated zones (zones that were successfully checked this scan)
+      const allZones = validatedZones;
 
-      // Group all active zones by exchange type
-      const allZones = {
-        forex: [],
-        deriv: [],
-        crypto: []
-      };
-
-      // Process all active zones
-      for (const zone of allActiveZones) {
-        const displaySymbol = zoneManager.getDisplayName(zone.symbol, zone.exchange);
-        const zoneData = {
-          symbol: zone.symbol,
-          displaySymbol,
-          type: zone.type,
-          price: zone.price
-        };
-
-        if (zone.exchange === 'forex') {
-          allZones.forex.push(zoneData);
-        } else if (zone.exchange === 'deriv') {
-          allZones.deriv.push(zoneData);
-        } else {
-          // crypto or kraken
-          allZones.crypto.push(zoneData);
-        }
-      }
-
-      // Only send message if there are any active zones
+      // Only send message if there are any validated zones
       const totalZones = allZones.forex.length + allZones.deriv.length + allZones.crypto.length;
       if (totalZones === 0) {
         logger.debug('No active zones to report');
