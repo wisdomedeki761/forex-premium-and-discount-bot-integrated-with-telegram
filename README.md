@@ -52,6 +52,17 @@ The **Premium/Discount Zone Trading Bot** is an advanced automated trading signa
 - **Zone Lifecycle Management** (Active → Expired → History)
 - **Consolidated Hourly Reports** with organized zone listings
 
+### 🎯 AI Zone Analysis (NEW!)
+
+- **Automatic Triggering** when ≥3 zones detected in one hour
+- **Smart Selection Algorithm** picks 1-2 highest probability setups
+- **Comprehensive Zone Data** (multi-timeframe, indicators, fundamentals)
+- **Probability Scoring** (HIGH/MEDIUM/LOW) with expected move ranges
+- **Timeframe Assessment** (2-4h / 4-8h / 1-2 days)
+- **Risk Factor Analysis** with mitigation strategies
+- **Performance Tracking** with win rate statistics
+- **Fallback Analysis** when AI unavailable
+
 ### 🤖 AI-Powered Analysis
 
 - **Comprehensive Market Data** (30+ data points per analysis)
@@ -404,6 +415,36 @@ Send these commands to your bot:
    - Use proper position sizing (1-2% risk per trade)
    - Set take profit at key resistance/support levels
    - Consider partial profits at TP1, move SL to breakeven
+
+### 🎯 AI Zone Analysis Workflow (Automated)
+
+The bot now automatically analyzes multiple zones when ≥3 are detected in one hour:
+
+1. **Automatic Trigger**
+   - Bot detects ≥3 zones within an hour
+   - Automatically triggers comprehensive AI analysis
+   - No manual intervention required
+
+2. **AI Selection Process**
+   - Analyzes all detected zones using 30+ data points each
+   - Scores zones by probability of smooth playout
+   - Selects 1-2 highest probability setups
+   - Considers technical, fundamental, and risk factors
+
+3. **Telegram Notifications**
+   - Receives formatted analysis with picks, probabilities, and levels
+   - Includes risk factors and mitigation strategies
+   - Shows expected move ranges and timeframes
+
+4. **Probability Levels**
+   - **HIGH (80%+)**: 2-4 hour timeframe, smooth playout likely
+   - **MEDIUM (60-79%)**: 4-8 hour timeframe, moderate confidence
+   - **LOW (40-59%)**: 8+ hour timeframe, extended playout
+
+5. **Performance Tracking**
+   - Bot tracks success rates of AI recommendations
+   - Improves future analysis accuracy
+   - Provides win rate statistics over time
 
 3. **Trade Management**
    - Monitor price action after entry

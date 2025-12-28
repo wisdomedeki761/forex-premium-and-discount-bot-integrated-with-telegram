@@ -7,6 +7,8 @@ import trendingScanner from './schedulers/trendingScanner.js';
 import zoneScanner from './schedulers/zoneScanner.js';
 import newsScanner from './schedulers/newsScanner.js';
 import entryMonitor from './schedulers/entryMonitor.js';
+import zoneAnalysisTrigger from './schedulers/zoneAnalysisTrigger.js';
+import modelsRefresher from './schedulers/modelsRefresher.js';
 // import conditionScanner from './schedulers/conditionScanner.js'; // Disabled - replaced by zone scanner
 // import confirmationMonitor from './schedulers/confirmationMonitor.js'; // Disabled - not used in zone detection
 // import activeMonitor from './schedulers/activeMonitor.js'; // Disabled - not used in zone detection
@@ -47,6 +49,8 @@ async function main() {
     logger.info('Starting schedulers...');
     trendingScanner.start();      // Runs at 00:00 UTC daily
     zoneScanner.start();           // Runs every hour (1h timeframe)
+    zoneAnalysisTrigger.start();   // Monitors zone detections for AI analysis
+    modelsRefresher.start();       // Refreshes OpenRouter models weekly
     newsScanner.start();           // Runs at 06:00 UTC daily
     entryMonitor.start();          // Monitors pairs for entry signals on 15m timeframe
 
@@ -57,7 +61,8 @@ async function main() {
         '✅ All systems operational\n' +
         '📊 Monitoring 1-hour zones 24/7\n' +
         '🟢 DISCOUNT zones (BUY opportunities)\n' +
-        '🔴 PREMIUM zones (SELL opportunities)\n\n' +
+        '🔴 PREMIUM zones (SELL opportunities)\n' +
+        '🎯 <b>AI Zone Analysis:</b> Auto-analysis when ≥3 zones detected\n\n' +
         'Use /help to see available commands.',
         { parse_mode: 'HTML' }
       );
@@ -70,6 +75,8 @@ async function main() {
     logger.info('📅 Active Schedulers:');
     logger.info('  ⏰ Trending scan: 00:00 UTC daily');
     logger.info('  ⏰ Zone detection: Every hour (1h timeframe)');
+    logger.info('  ⏰ Zone analysis: Monitors for AI analysis triggers');
+    logger.info('  ⏰ AI models refresh: Every Sunday at 02:00 UTC');
     logger.info('  ⏰ Economic news: 06:00 UTC daily');
     logger.info('  ⏰ Entry monitor: Every 15 minutes (15m SuperTrend)');
     logger.info('');
@@ -81,6 +88,7 @@ async function main() {
       logger.info('');
       logger.info('Shutting down gracefully...');
       entryMonitor.stop();
+      // Note: zoneAnalysisTrigger doesn't have a stop method (it's passive)
       krakenClient.close();
       derivClient.close();
       logger.success('✅ Bot stopped');

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import config from '../config.js';
 import logger from '../utils/logger.js';
+import openRouterModelsDB from '../db/openRouterModels.js';
 
 /**
  * OpenRouter AI Client with Multiple Model Fallback
@@ -8,10 +9,46 @@ import logger from '../utils/logger.js';
 export class AIClient {
   constructor() {
     this.apiKeys = config.openRouter.apiKeys || [];
-    this.models = config.openRouter.models || [];
+    this.storedModels = []; // Will be loaded from database
     this.currentKeyIndex = 0;
     this.currentModelIndex = 0;
     this.baseUrl = 'https://openrouter.ai/api/v1/chat/completions';
+    this.modelsLoaded = false;
+  }
+
+  /**
+   * Load models from database
+   */
+  async loadModels() {
+    if (this.modelsLoaded && this.storedModels.length > 0) {
+      return; // Already loaded
+    }
+
+    try {
+      logger.debug('Loading AI models from database...');
+      this.storedModels = await openRouterModelsDB.getActiveFreeModels();
+
+      if (this.storedModels.length === 0) {
+        logger.warn('No active models found in database, using fallback models');
+        // Fallback to basic hardcoded models if database is empty
+        this.storedModels = [
+          { id: 'openai/gpt-3.5-turbo', name: 'GPT-3.5 Turbo (Fallback)' },
+          { id: 'anthropic/claude-3-haiku', name: 'Claude 3 Haiku (Fallback)' }
+        ];
+      } else {
+        logger.info(`Loaded ${this.storedModels.length} AI models from database`);
+      }
+
+      this.modelsLoaded = true;
+
+    } catch (error) {
+      logger.error('Error loading models from database:', error.message);
+      // Fallback to basic models
+      this.storedModels = [
+        { id: 'openai/gpt-3.5-turbo', name: 'GPT-3.5 Turbo (Fallback)' }
+      ];
+      this.modelsLoaded = true;
+    }
   }
 
   /**
@@ -22,20 +59,24 @@ export class AIClient {
       throw new Error('No OpenRouter API keys configured');
     }
 
-    if (this.models.length === 0) {
-      throw new Error('No AI models configured');
+    // Load models from database if not loaded
+    await this.loadModels();
+
+    if (this.storedModels.length === 0) {
+      throw new Error('No AI models available');
     }
 
     // Calculate total combinations
-    const totalCombinations = this.apiKeys.length * this.models.length;
+    const totalCombinations = this.apiKeys.length * this.storedModels.length;
     const attempts = maxRetries || totalCombinations;
 
     for (let attempt = 0; attempt < attempts; attempt++) {
       const apiKey = this.apiKeys[this.currentKeyIndex];
-      const model = this.models[this.currentModelIndex];
+      const modelData = this.storedModels[this.currentModelIndex];
+      const model = modelData.id;
 
       try {
-        logger.info(`AI attempt ${attempt + 1}/${attempts}: Key ${this.currentKeyIndex + 1}, Model: ${model}`);
+        logger.info(`🤖 AI attempt ${attempt + 1}/${attempts}: Key ${this.currentKeyIndex + 1}, Model: ${model.replace(':free', '')}`);
 
         const response = await axios.post(
           this.baseUrl,
@@ -100,7 +141,7 @@ export class AIClient {
     this.currentModelIndex++;
 
     // If we've tried all models for this key, move to next key
-    if (this.currentModelIndex >= this.models.length) {
+    if (this.currentModelIndex >= this.storedModels.length) {
       this.currentModelIndex = 0;
       this.currentKeyIndex++;
 
@@ -164,8 +205,15 @@ Please analyze this data and provide your professional assessment. Structure you
   /**
    * Check if API keys are configured
    */
-  isConfigured() {
-    return this.apiKeys.length > 0 && this.models.length > 0;
+  async isConfigured() {
+    if (this.apiKeys.length === 0) {
+      return false;
+    }
+
+    // Load models if not loaded
+    await this.loadModels();
+
+    return this.storedModels.length > 0;
   }
 }
 
