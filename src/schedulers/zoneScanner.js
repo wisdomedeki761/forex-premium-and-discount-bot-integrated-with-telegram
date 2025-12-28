@@ -9,6 +9,8 @@ import config from '../config.js';
 import logger from '../utils/logger.js';
 import trendingScanner from './trendingScanner.js';
 import telegramBot from '../apis/telegram.js';
+import zoneAnalysisTrigger from './zoneAnalysisTrigger.js';
+import zoneAnalysisManager from '../utils/zoneAnalysisManager.js';
 
 /**
  * Premium/Discount Zone Scanner
@@ -95,6 +97,16 @@ class ZoneScanner {
 
       // Only send message with zones that were successfully validated this scan
       await this.sendConsolidatedZoneMessage(validatedZones);
+
+      // Clean up old pending analysis picks (older than 24 hours)
+      try {
+        const expiredCount = await zoneAnalysisManager.expireOldPicks(24);
+        if (expiredCount > 0) {
+          logger.info(`Cleaned up ${expiredCount} expired analysis picks`);
+        }
+      } catch (error) {
+        logger.warn('Error cleaning up old analysis picks:', error.message);
+      }
 
       logger.success(`1h zone scan completed: ${zonesDetected} zones detected`);
     } catch (error) {
@@ -216,7 +228,7 @@ class ZoneScanner {
         // Collect zone data for new zones
         const displaySymbol = zoneManager.getDisplayName(symbol, exchange);
         const zoneData = { symbol, displaySymbol, type: 'discount', price: currentPrice };
-        
+
         if (exchange === 'forex') {
           newZones.forex.push(zoneData);
           validatedZones.forex.push(zoneData);
@@ -227,6 +239,15 @@ class ZoneScanner {
           newZones.crypto.push(zoneData);
           validatedZones.crypto.push(zoneData);
         }
+
+        // Trigger zone analysis monitoring
+        zoneAnalysisTrigger.recordZoneDetection({
+          symbol,
+          exchange,
+          type: 'discount',
+          price: currentPrice,
+          detectedAt: new Date().toISOString()
+        });
 
         return true;
       }
@@ -248,7 +269,7 @@ class ZoneScanner {
         // Collect zone data for new zones
         const displaySymbol = zoneManager.getDisplayName(symbol, exchange);
         const zoneData = { symbol, displaySymbol, type: 'premium', price: currentPrice };
-        
+
         if (exchange === 'forex') {
           newZones.forex.push(zoneData);
           validatedZones.forex.push(zoneData);
@@ -259,6 +280,15 @@ class ZoneScanner {
           newZones.crypto.push(zoneData);
           validatedZones.crypto.push(zoneData);
         }
+
+        // Trigger zone analysis monitoring
+        zoneAnalysisTrigger.recordZoneDetection({
+          symbol,
+          exchange,
+          type: 'premium',
+          price: currentPrice,
+          detectedAt: new Date().toISOString()
+        });
 
         return true;
       }

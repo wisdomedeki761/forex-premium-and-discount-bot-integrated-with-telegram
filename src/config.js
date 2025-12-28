@@ -78,21 +78,8 @@ export const config = {
   },
 
   openRouter: {
-    apiKeys: process.env.OPENROUTER_API_KEYS?.split(',').map(k => k.trim()) || [],
-    models: [
-      "x-ai/grok-4.1-fast:free",
-      "tngtech/deepseek-r1t2-chimera:free",
-      "z-ai/glm-4.5-air:free",
-      "tngtech/deepseek-r1t-chimera:free",
-      "deepseek/deepseek-chat-v3-0324:free",
-      "deepseek/deepseek-r1-0528:free",
-      "google/gemma-3-27b-it:free",
-      "meituan/longcat-flash-chat:free",
-      "openai/gpt-oss-20b:free",
-      "qwen/qwen3-235b-a22b:free",
-      "nousresearch/hermes-3-llama-3.1-405b:free",
-      "qwen/qwen3-30b-a3b:free"
-    ]
+    apiKeys: process.env.OPENROUTER_API_KEYS?.split(',').map(k => k.trim()) || []
+    // Models are now dynamically loaded from database
   },
 
   trading: {
