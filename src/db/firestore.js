@@ -4,8 +4,22 @@ import config from '../config.js';
 import logger from '../utils/logger.js';
 
 let db = null;
+let initialized = false;
 
 export async function initializeFirestore() {
+  // If already initialized, just return the existing db
+  if (initialized && db) {
+    return db;
+  }
+
+  // Check if Firebase app already exists
+  if (admin.apps.length > 0) {
+    db = admin.firestore();
+    initialized = true;
+    logger.debug('Using existing Firebase app');
+    return db;
+  }
+
   try {
     let credential;
 
@@ -35,6 +49,7 @@ export async function initializeFirestore() {
     });
 
     db = admin.firestore();
+    initialized = true;
     logger.success('Connected to Firestore');
     return db;
   } catch (error) {

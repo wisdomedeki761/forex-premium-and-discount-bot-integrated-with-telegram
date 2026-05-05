@@ -5,6 +5,7 @@ firebase-key.json
 .DS_Store
 dist/
 build/
+MT5/PLAN.MD
 
 # PM2 logs
 logs/
@@ -27,3 +28,5 @@ package-lock.json
 
 updated dec14.zip
 PNL_CALCULATION_LOGIC.md
+
+MT5/
