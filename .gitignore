@@ -1,10 +1,10 @@
 node_modules/
-.env
 firebase-key.json
 *log
 .DS_Store
 dist/
 build/
+MT5/PLAN.MD
 
 # PM2 logs
 logs/
@@ -27,3 +27,10 @@ package-lock.json
 
 updated dec14.zip
 PNL_CALCULATION_LOGIC.md
+
+MT5/
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
+config.bat

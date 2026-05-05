@@ -49,7 +49,7 @@ async function main() {
     logger.info('Starting schedulers...');
     trendingScanner.start();      // Runs at 00:00 UTC daily
     zoneScanner.start();           // Runs every hour (1h timeframe)
-    zoneAnalysisTrigger.start();   // Monitors zone detections for AI analysis
+    await zoneAnalysisTrigger.start();   // Monitors zone detections for AI analysis
     modelsRefresher.start();       // Refreshes OpenRouter models weekly
     newsScanner.start();           // Runs at 06:00 UTC daily
     entryMonitor.start();          // Monitors pairs for entry signals on 15m timeframe

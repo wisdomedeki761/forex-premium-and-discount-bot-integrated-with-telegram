@@ -77,6 +77,8 @@ export class TelegramClient {
     this.bot.onText(/\/getchatid/, (msg) => this.handleGetChatId(msg));
     this.bot.onText(/\/reset_zones/, (msg) => this.handleResetZones(msg));
     this.bot.onText(/\/add_indices/, (msg) => this.handleAddIndices(msg));
+    this.bot.onText(/\/ai_status/, (msg) => this.handleAIStatus(msg));
+    this.bot.onText(/\/test_ai/, (msg) => this.handleTestAI(msg));
 
     // Callback query handler for inline buttons
     this.bot.on('callback_query', (query) => this.handleCallbackQuery(query));
@@ -195,6 +197,7 @@ Professional Smart Money Concepts zone detection and AI-powered market analysis.
 /subscribe - Enable zone notifications
 /unsubscribe - Disable notifications
 /status - Check bot status and connection
+/ai_status - Check AI analysis trigger status
 /getchatid - Retrieve chat/channel ID for setup
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1961,6 +1964,96 @@ ${trendEmoji} <b>Trend: ${analysis.trend}</b>
         `Usage: /entry eurusd up\n` +
         `       /entry eurusd down`
       );
+    }
+  }
+
+  /**
+   * Handle /ai_status command - Show AI analysis trigger status
+   */
+  async handleAIStatus(msg) {
+    const chatId = msg.chat.id;
+
+    try {
+      const { default: zoneAnalysisTrigger } = await import('../schedulers/zoneAnalysisTrigger.js');
+      const { default: aiClient } = await import('./ai.js');
+
+      const status = zoneAnalysisTrigger.getStatus();
+      const isAIConfigured = await aiClient.isConfigured();
+
+      let message = `🤖 <b>AI Zone Analysis Status</b>\n\n`;
+      message += `📊 <b>Trigger Settings:</b>\n`;
+      message += `   • Threshold: ${status.minZonesThreshold} zones to trigger AI\n`;
+      message += `   • Max analyses per hour: 2\n\n`;
+
+      message += `📈 <b>Current Hour:</b>\n`;
+      message += `   • Zones detected: ${status.hourlyZoneCount}/${status.minZonesThreshold}\n`;
+      message += `   • Analyses this hour: ${status.analysesThisHour}/2\n`;
+      message += `   • Currently analyzing: ${status.isAnalyzing ? 'Yes ⏳' : 'No'}\n`;
+      message += `   • Last reset: ${new Date(status.lastResetTime).toLocaleTimeString()}\n\n`;
+
+      message += `⚙️ <b>AI Configuration:</b>\n`;
+      message += `   • Status: ${isAIConfigured ? '✅ Configured' : '❌ NOT Configured'}\n`;
+
+      if (!isAIConfigured) {
+        message += `\n⚠️ AI is not configured. Check OPENROUTER_API_KEYS env variable.`;
+      }
+
+      if (status.hourlyZoneCount > 0 && status.detectedZones > 0) {
+        message += `\n📋 <b>Detected Zones:</b> ${status.detectedZones} zone(s) waiting`;
+      }
+
+      await this.bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+    } catch (error) {
+      logger.error('Error in /ai_status command:', error.message);
+      await this.bot.sendMessage(chatId, `❌ Error: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle /test_ai command - Manually trigger AI analysis (owner only)
+   */
+  async handleTestAI(msg) {
+    const chatId = msg.chat.id;
+
+    try {
+      // Check if user is owner
+      const userId = msg.from.id;
+      const ownerChatId = config.telegram.ownerChatId;
+
+      if (!ownerChatId || String(userId) !== String(ownerChatId)) {
+        await this.bot.sendMessage(chatId, '❌ This command is owner-only.');
+        return;
+      }
+
+      const { default: zoneAnalysisTrigger } = await import('../schedulers/zoneAnalysisTrigger.js');
+      const status = zoneAnalysisTrigger.getStatus();
+
+      if (status.detectedZones === 0) {
+        await this.bot.sendMessage(chatId,
+          `❌ No zones available for testing.\n\n` +
+          `Wait for zones to be detected, or check /active_signals for existing zones.`
+        );
+        return;
+      }
+
+      if (status.isAnalyzing) {
+        await this.bot.sendMessage(chatId, `⏳ AI analysis is already in progress. Please wait.`);
+        return;
+      }
+
+      await this.bot.sendMessage(chatId,
+        `🧪 <b>Manual AI Analysis Test</b>\n\n` +
+        `Triggering analysis with ${status.detectedZones} zone(s)...\n` +
+        `Check your chat for results.`,
+        { parse_mode: 'HTML' }
+      );
+
+      // Trigger the analysis manually
+      await zoneAnalysisTrigger.manualTrigger();
+
+    } catch (error) {
+      logger.error('Error in /test_ai command:', error.message);
+      await this.bot.sendMessage(chatId, `❌ Error: ${error.message}`);
     }
   }
 

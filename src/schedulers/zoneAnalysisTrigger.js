@@ -3,6 +3,7 @@ import zoneDataAggregator from '../utils/zoneDataAggregator.js';
 import zoneAnalysisAI from '../apis/zoneAnalysisAI.js';
 import zoneAnalysisManager from '../utils/zoneAnalysisManager.js';
 import telegramBot from '../apis/telegram.js';
+import aiClient from '../apis/ai.js';
 
 /**
  * Zone Analysis Trigger
@@ -14,7 +15,7 @@ class ZoneAnalysisTrigger {
     this.detectedZones = [];
     this.lastResetTime = new Date();
     this.isAnalyzing = false;
-    this.minZonesThreshold = 3; // Minimum zones to trigger analysis
+    this.minZonesThreshold = 3; // Minimum zones to trigger analysis (> 2)
     this.maxAnalysesPerHour = 2; // Prevent spam analysis
     this.analysesThisHour = 0;
   }
@@ -22,8 +23,42 @@ class ZoneAnalysisTrigger {
   /**
    * Start the zone analysis trigger
    */
-  start() {
+  async start() {
     logger.success('Zone analysis trigger started');
+    logger.info(`📊 AI Analysis will trigger when ${this.minZonesThreshold}+ zones detected in an hour`);
+
+    // Check if AI is configured
+    try {
+      const isConfigured = await aiClient.isConfigured();
+      if (isConfigured) {
+        logger.info('✅ AI client is configured and ready');
+      } else {
+        logger.warn('⚠️ AI client is NOT configured - check OPENROUTER_API_KEYS');
+      }
+    } catch (error) {
+      logger.warn('⚠️ Could not check AI configuration:', error.message);
+    }
+  }
+
+  /**
+   * Manually trigger analysis (for testing)
+   * Call this to force analysis with current zones or test zones
+   */
+  async manualTrigger(testZones = null) {
+    if (testZones && testZones.length > 0) {
+      logger.info(`🧪 Manual trigger with ${testZones.length} test zones`);
+      this.detectedZones = testZones;
+      this.hourlyZoneCount = testZones.length;
+    }
+
+    if (this.detectedZones.length === 0) {
+      logger.warn('❌ Cannot manually trigger: no zones available');
+      return null;
+    }
+
+    logger.info(`🧪 Manually triggering AI analysis with ${this.detectedZones.length} zones`);
+    await this.triggerAnalysis();
+    return this.getStatus();
   }
 
   /**
@@ -36,6 +71,7 @@ class ZoneAnalysisTrigger {
 
       // Reset counters every hour
       if (hoursSinceReset >= 1) {
+        logger.info(`⏰ Hourly reset triggered (${hoursSinceReset.toFixed(2)} hours since last reset)`);
         this.resetHourlyCounters();
       }
 
@@ -48,10 +84,11 @@ class ZoneAnalysisTrigger {
 
       this.hourlyZoneCount++;
 
-      logger.info(`Zone recorded: ${zoneData.symbol} (${this.hourlyZoneCount}/${this.minZonesThreshold})`);
+      logger.info(`📍 Zone recorded: ${zoneData.symbol} (${zoneData.type}) - Count: ${this.hourlyZoneCount}/${this.minZonesThreshold}`);
 
       // Check if we should trigger analysis
       if (this.shouldTriggerAnalysis()) {
+        logger.info(`🚀 AI Analysis trigger threshold reached!`);
         this.triggerAnalysis();
       }
 
@@ -64,8 +101,9 @@ class ZoneAnalysisTrigger {
    * Check if analysis should be triggered
    */
   shouldTriggerAnalysis() {
-    // Must have minimum zones
+    // Must have minimum zones (> 2 means >= 3)
     if (this.hourlyZoneCount < this.minZonesThreshold) {
+      logger.info(`📊 Zone count: ${this.hourlyZoneCount}/${this.minZonesThreshold} (need ${this.minZonesThreshold} to trigger AI analysis)`);
       return false;
     }
 
@@ -77,16 +115,13 @@ class ZoneAnalysisTrigger {
 
     // Don't trigger if already analyzing
     if (this.isAnalyzing) {
-      logger.debug('Analysis already in progress');
+      logger.info('⏳ AI analysis already in progress, waiting...');
       return false;
     }
 
-    // Check if we have enough different pairs (avoid duplicate symbols)
+    // Get unique symbols for logging
     const uniqueSymbols = [...new Set(this.detectedZones.map(z => z.symbol))];
-    if (uniqueSymbols.length < Math.min(2, this.hourlyZoneCount)) {
-      logger.debug('Not enough unique pairs for meaningful analysis');
-      return false;
-    }
+    logger.info(`✅ Trigger conditions met: ${this.hourlyZoneCount} zones detected (${uniqueSymbols.length} unique symbols)`);
 
     return true;
   }
@@ -105,6 +140,7 @@ class ZoneAnalysisTrigger {
 
     try {
       logger.info(`🎯 TRIGGERING AI ZONE ANALYSIS: ${this.hourlyZoneCount} zones detected`);
+      logger.info(`📋 Zones to analyze: ${this.detectedZones.map(z => `${z.symbol}(${z.type})`).join(', ')}`);
 
       // Send initial notification
       await this.sendAnalysisStartedNotification();
@@ -112,15 +148,20 @@ class ZoneAnalysisTrigger {
       // Collect comprehensive data for each zone
       const zonesWithData = await this.prepareZonesForAnalysis();
 
-      if (zonesWithData.length === 0) {
-        logger.warn('No zones prepared for analysis');
+      if (!zonesWithData || zonesWithData.length === 0) {
+        logger.warn('❌ No zones prepared for analysis - aborting');
+        await this.sendAnalysisErrorNotification('Failed to prepare zone data for analysis');
         return;
       }
+
+      logger.info(`🤖 Sending ${zonesWithData.length} zones to AI for analysis...`);
 
       // Send to AI for analysis
       const analysisResult = await zoneAnalysisAI.analyzeZones(zonesWithData);
 
       if (analysisResult) {
+        logger.info(`🎯 AI analysis complete! Got ${analysisResult.picks?.length || 0} picks`);
+
         try {
           // Store analysis result
           await zoneAnalysisManager.storeAnalysisResult(analysisResult);
@@ -137,10 +178,14 @@ class ZoneAnalysisTrigger {
         } catch (error) {
           logger.error('❌ Failed to send analysis result to subscribers:', error.message);
         }
+      } else {
+        logger.error('❌ AI analysis returned no result');
+        await this.sendAnalysisErrorNotification('AI analysis returned no result');
       }
 
     } catch (error) {
-      logger.error('Error in zone analysis:', error.message);
+      logger.error('❌ Error in zone analysis:', error.message);
+      logger.error(error.stack);
 
       // Send error notification
       await this.sendAnalysisErrorNotification(error.message);
@@ -155,26 +200,29 @@ class ZoneAnalysisTrigger {
   async prepareZonesForAnalysis() {
     const zonesWithData = [];
 
+    logger.info(`📦 Preparing data for ${this.detectedZones.length} detected zones...`);
+
     for (const zone of this.detectedZones) {
       try {
-        logger.debug(`Preparing data for ${zone.symbol}...`);
+        logger.info(`  ➤ Aggregating data for ${zone.symbol} (${zone.type})...`);
 
         // Get comprehensive zone data
         const zoneData = await zoneDataAggregator.aggregateZoneData(zone);
 
         if (zoneData) {
           zonesWithData.push(zoneData);
+          logger.info(`  ✓ ${zone.symbol} data ready`);
         } else {
-          logger.warn(`Failed to aggregate data for ${zone.symbol}`);
+          logger.warn(`  ✗ Failed to aggregate data for ${zone.symbol}`);
         }
 
       } catch (error) {
-        logger.error(`Error preparing zone data for ${zone.symbol}:`, error.message);
+        logger.error(`  ✗ Error preparing zone data for ${zone.symbol}:`, error.message);
       }
     }
 
-    logger.info(`Prepared ${zonesWithData.length} zones for AI analysis`);
-    return zonesWithData;
+    logger.info(`📊 Prepared ${zonesWithData.length}/${this.detectedZones.length} zones for AI analysis`);
+    return zonesWithData; // Always returns an array (may be empty)
   }
 
   /**

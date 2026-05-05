@@ -71,20 +71,27 @@ class ZoneAnalysisAI {
       if (zone.multiTimeframe) {
         formatted += `\nMULTI-TIMEFRAME ANALYSIS:\n`;
 
-        if (zone.multiTimeframe['1H']) {
+        if (zone.multiTimeframe['1H']?.analysis) {
           const h1 = zone.multiTimeframe['1H'];
-          formatted += `1H Trend: ${h1.analysis.trend} | Volatility: ${(h1.analysis.volatility * 100).toFixed(2)}%\n`;
-          formatted += `1H Volume: ${h1.analysis.volumeTrend} | Range: $${h1.analysis.priceRange.low.toFixed(5)} - $${h1.analysis.priceRange.high.toFixed(5)}\n`;
+          const trend = h1.analysis.trend || 'unknown';
+          const volatility = h1.analysis.volatility ? (h1.analysis.volatility * 100).toFixed(2) : 'N/A';
+          const volumeTrend = h1.analysis.volumeTrend || 'unknown';
+          const priceLow = h1.analysis.priceRange?.low?.toFixed(5) || 'N/A';
+          const priceHigh = h1.analysis.priceRange?.high?.toFixed(5) || 'N/A';
+          formatted += `1H Trend: ${trend} | Volatility: ${volatility}%\n`;
+          formatted += `1H Volume: ${volumeTrend} | Range: $${priceLow} - $${priceHigh}\n`;
         }
 
-        if (zone.multiTimeframe['4H']) {
+        if (zone.multiTimeframe['4H']?.analysis) {
           const h4 = zone.multiTimeframe['4H'];
-          formatted += `4H Trend: ${h4.analysis.trend} | Strength: ${h4.analysis.trend}\n`;
+          const trend = h4.analysis.trend || 'unknown';
+          formatted += `4H Trend: ${trend} | Strength: ${trend}\n`;
         }
 
-        if (zone.multiTimeframe['1D']) {
+        if (zone.multiTimeframe['1D']?.analysis) {
           const d1 = zone.multiTimeframe['1D'];
-          formatted += `Daily Trend: ${d1.analysis.trend}\n`;
+          const trend = d1.analysis.trend || 'unknown';
+          formatted += `Daily Trend: ${trend}\n`;
         }
       }
 
@@ -94,9 +101,15 @@ class ZoneAnalysisAI {
 
         if (zone.indicators.calculated) {
           const calc = zone.indicators.calculated;
-          formatted += `Bollinger Position: ${calc.bollingerBands.position.toFixed(2)} std dev\n`;
-          formatted += `ATR: ${(calc.atr * 100).toFixed(2)}% | ADX: ${calc.adx.toFixed(1)}\n`;
-          formatted += `Trend Strength: ${calc.trendStrength}\n`;
+          if (calc.bollingerBands?.position != null) {
+            formatted += `Bollinger Position: ${calc.bollingerBands.position.toFixed(2)} std dev\n`;
+          }
+          if (calc.atr != null && calc.adx != null) {
+            formatted += `ATR: ${(calc.atr * 100).toFixed(2)}% | ADX: ${calc.adx.toFixed(1)}\n`;
+          }
+          if (calc.trendStrength) {
+            formatted += `Trend Strength: ${calc.trendStrength}\n`;
+          }
         }
 
         if (zone.indicators.alphaVantage) {
@@ -109,15 +122,15 @@ class ZoneAnalysisAI {
       // Market structure
       if (zone.marketStructure) {
         formatted += `\nMARKET STRUCTURE:\n`;
-        formatted += `Overall Trend: ${zone.marketStructure.trend}\n`;
-        formatted += `Structure Strength: ${zone.marketStructure.structureStrength}\n`;
+        formatted += `Overall Trend: ${zone.marketStructure.trend || 'unknown'}\n`;
+        formatted += `Structure Strength: ${zone.marketStructure.structureStrength || 'unknown'}\n`;
 
-        if (zone.marketStructure.swingHighs.length > 0) {
+        if (zone.marketStructure.swingHighs?.length > 0) {
           const recentHigh = Math.max(...zone.marketStructure.swingHighs.map(h => h.price));
           formatted += `Recent Swing High: $${recentHigh.toFixed(5)}\n`;
         }
 
-        if (zone.marketStructure.swingLows.length > 0) {
+        if (zone.marketStructure.swingLows?.length > 0) {
           const recentLow = Math.min(...zone.marketStructure.swingLows.map(l => l.price));
           formatted += `Recent Swing Low: $${recentLow.toFixed(5)}\n`;
         }
@@ -411,20 +424,20 @@ Respond with ONLY the formatted analysis above. No additional text or explanatio
         const calc = zone.indicators.calculated;
 
         // Bollinger position (extreme = better)
-        if (Math.abs(calc.bollingerBands.position) > 2) {
+        if (calc.bollingerBands?.position != null && Math.abs(calc.bollingerBands.position) > 2) {
           score += 2;
           reasons.push('Extreme Bollinger position');
         }
 
         // ADX strength
-        if (calc.adx > 25) {
+        if (calc.adx != null && calc.adx > 25) {
           score += 1.5;
           reasons.push('Strong trend (ADX > 25)');
         }
 
         // ATR (moderate preferred)
         const normalizedAtr = calc.atr;
-        if (normalizedAtr > 0.005 && normalizedAtr < 0.02) {
+        if (normalizedAtr != null && normalizedAtr > 0.005 && normalizedAtr < 0.02) {
           score += 1;
           reasons.push('Moderate volatility');
         }
